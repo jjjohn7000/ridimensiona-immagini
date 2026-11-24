@@ -37,10 +37,12 @@ Per creare l'eseguibile su Windows basta avviare `Crea_EXE.bat`.
 
 ### Pubblicare una nuova versione
 
-1. Aggiorna `APP_VERSION` e aggiungi le novità in cima a `CHANGELOG`, all'inizio di `RidimensionaImmagini.py`.
-2. Carica le modifiche e un'etichetta con lo stesso numero, per esempio `v0.9.5-beta`.
-3. GitHub crea da solo l'eseguibile su Windows e pubblica la versione con le novità
+1. Aggiorna `APP_VERSION` (es. `"0.9.5 beta"`) e aggiungi le novità in cima a `CHANGELOG`, all'inizio di
+   `RidimensionaImmagini.py`.
+2. Carica la modifica su `main`.
+3. GitHub crea da solo l'eseguibile su Windows, l'etichetta (es. `v0.9.5-beta`) e la versione con le novità
    (`.github/workflows/rilascio.yml`). Chi usa il programma la riceve all'avvio successivo.
+   Se il numero di versione non cambia, non viene pubblicato nulla.
 
 ## Licenza
 

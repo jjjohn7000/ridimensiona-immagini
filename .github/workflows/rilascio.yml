@@ -1,10 +1,14 @@
 # Crea RidimensionaImmagini.exe su Windows e pubblica la versione su GitHub.
-# Si avvia da solo quando viene caricata un'etichetta (tag) come "v0.9.4-beta".
+# Si avvia da solo quando su "main" arriva il programma con un numero di versione (APP_VERSION)
+# non ancora pubblicato; se la versione esiste già non fa nulla.
+# Si può avviare anche a mano dalla scheda "Actions".
 name: Crea e pubblica la versione
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: ["RidimensionaImmagini.py", ".github/workflows/rilascio.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,31 +19,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Legge il numero di versione del programma
+        id: ver
+        shell: python
+        run: |
+          import os, re
+          src = open("RidimensionaImmagini.py", encoding="utf-8").read()
+          ver = re.search(r'^APP_VERSION = "([^"]+)"', src, re.M).group(1).strip()
+          tag = "v" + re.sub(r"\s+", "-", ver)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={ver}\ntag={tag}\n")
+          print("Versione", ver, "- etichetta", tag)
+
+      - name: Controlla se questa versione è già pubblicata
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.ver.outputs.tag }}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "nuova=no" >> "$GITHUB_OUTPUT"
+            echo "La versione ${{ steps.ver.outputs.tag }} è già pubblicata: nulla da fare."
+          else
+            echo "nuova=si" >> "$GITHUB_OUTPUT"
+            echo "Nuova versione da pubblicare: ${{ steps.ver.outputs.tag }}"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.check.outputs.nuova == 'si'
         with:
           python-version: "3.12"
 
-      - name: Controlla che la versione del programma corrisponda all'etichetta
-        shell: python
-        run: |
-          import os, re, sys
-          tag = os.environ["GITHUB_REF_NAME"]
-          src = open("RidimensionaImmagini.py", encoding="utf-8").read()
-          ver = re.search(r'^APP_VERSION = "([^"]+)"', src, re.M).group(1)
-          norm = lambda s: (re.findall(r"\d+", s)[:3], "beta" in s.lower())
-          if norm(ver) != norm(tag):
-              sys.exit(f"APP_VERSION ({ver}) non corrisponde all'etichetta {tag}")
-          print("Versione", ver)
-
       - name: Installa i componenti
+        if: steps.check.outputs.nuova == 'si'
         run: python -m pip install --upgrade pip pillow pillow-heif pymupdf tkinterdnd2 pyinstaller
 
       - name: Crea l'eseguibile
+        if: steps.check.outputs.nuova == 'si'
         run: |
           python crea_version_info.py
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name RidimensionaImmagini --version-file version_info.txt --collect-all tkinterdnd2 --collect-all pillow_heif --collect-all pymupdf RidimensionaImmagini.py
 
       - name: Prova di avvio dell'eseguibile
+        if: steps.check.outputs.nuova == 'si'
         shell: pwsh
         run: |
           $p = Start-Process dist\RidimensionaImmagini.exe -PassThru
@@ -49,9 +71,10 @@ jobs:
           Write-Host "L'eseguibile si avvia correttamente"
 
       - name: Impronta SHA-256 e note della versione
+        if: steps.check.outputs.nuova == 'si'
         shell: python
         run: |
-          import hashlib, os, re
+          import hashlib, re
           exe = "dist/RidimensionaImmagini.exe"
           digest = hashlib.sha256(open(exe, "rb").read()).hexdigest()
           open(exe + ".sha256", "w").write(digest + "  RidimensionaImmagini.exe\n")
@@ -66,8 +89,11 @@ jobs:
           print(notes)
 
       - uses: softprops/action-gh-release@v2
+        if: steps.check.outputs.nuova == 'si'
         with:
-          name: Ridimensiona Immagini ${{ github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Ridimensiona Immagini ${{ steps.ver.outputs.version }}
           body_path: note_versione.md
           files: |
             dist/RidimensionaImmagini.exe
