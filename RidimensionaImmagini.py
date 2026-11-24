@@ -52,7 +52,7 @@ except Exception:
     pass
 
 APP_NAME = "Ridimensiona Immagini"
-APP_VERSION = "0.9.6 beta"
+APP_VERSION = "0.9.7 beta"
 AUTHOR_NAME = "Giovanni Orlando"
 
 # --------------------------------------------------------------------------- aggiornamenti
@@ -65,7 +65,11 @@ EXE_ASSET = "RidimensionaImmagini.exe"
 
 # Novità delle versioni, dalla più recente. La sezione della versione corrente viene usata
 # anche come descrizione della versione pubblicata su GitHub.
-CHANGELOG = """## 0.9.6 beta - 24 novembre 2026
+CHANGELOG = """## 0.9.7 beta - 24 novembre 2026
+- Il pulsante "Scarica e installa" si chiama ora "Aggiorna ora": il programma non installa nulla, sostituisce solo il proprio file con quello nuovo.
+- Dopo un aggiornamento, alla riapertura il programma conferma il passaggio alla nuova versione e propone di vederne le novità.
+
+## 0.9.6 beta - 24 novembre 2026
 - Controllo degli aggiornamenti più affidabile: se il servizio principale di GitHub non risponde (per esempio perché la rete di un ufficio ha superato il limite di 60 controlli all'ora), il programma usa una seconda strada.
 - Se il controllo non riesce, il messaggio spiega il motivo preciso (nessuna connessione, limite di GitHub, antivirus o rete aziendale che bloccano, proxy, tempo scaduto) e propone di aprire la pagina delle versioni.
 
@@ -536,7 +540,7 @@ Indica quanti MB al massimo deve pesare ciascun PDF (es. 2 MB per un portale che
 
 # 7. Aggiornamenti e novità
 All'avvio il programma controlla su GitHub, in pochi secondi e senza bloccare il lavoro, se è disponibile una versione più recente. Se c'è, mostra una finestra con le novità e tre scelte:
-- Scarica e installa: il programma scarica la nuova versione, controlla che il file sia integro, poi si chiude, si aggiorna e si riapre da solo.
+- Aggiorna ora: il programma scarica la nuova versione nella stessa cartella in cui si trova (anche sul Desktop o su una chiavetta), controlla che il file sia integro, poi si chiude, sostituisce il vecchio file con il nuovo e si riapre da solo, confermando l'aggiornamento. Non viene installato nulla: è solo il file del programma che viene sostituito.
 - Salta questa versione: non verrà più proposta all'avvio (resta disponibile con "Controlla aggiornamenti").
 - Più tardi: la proposta ricompare alla prossima apertura.
 Dal menu "?" puoi anche:
@@ -1673,8 +1677,27 @@ class App:
 
         self.update_state()
         self.on_tab_changed()
-        if self.check_on_start.get():
+        if self.cfg.get("updated_from"):
+            root.after(600, self.confirm_update)
+        elif self.check_on_start.get():
             root.after(2000, lambda: self.check_updates(manual=False))
+
+    def confirm_update(self):
+        """Alla prima apertura dopo un aggiornamento conferma che la sostituzione è riuscita."""
+        old = self.cfg.pop("updated_from", "")
+        save_config(self.cfg)
+        if not old:
+            return
+        if parse_version(old) < parse_version(APP_VERSION):
+            self.status.set("Aggiornato alla versione %s." % APP_VERSION)
+            if messagebox.askyesno(APP_NAME, "Aggiornamento completato: dalla versione %s alla %s.\n\n"
+                                             "Vuoi vedere le novità?" % (old, APP_VERSION)):
+                self.show_changelog()
+        else:
+            messagebox.showwarning(APP_NAME, "L'aggiornamento non sembra riuscito: è ancora aperta la versione %s.\n\n"
+                                             "Puoi scaricare la versione più recente dalla pagina che si aprirà ora "
+                                             "e sostituire a mano il file." % APP_VERSION)
+            webbrowser.open(RELEASES_URL + "/latest")
 
     # --- sezioni con barra laterale colorata
     def make_section(self, row, title, key):
@@ -1782,7 +1805,7 @@ class App:
 
         can_install = getattr(sys, "frozen", False) and sys.platform == "win32" and latest["exe"]
         if can_install:
-            ttk.Button(buttons, text="Scarica e installa",
+            ttk.Button(buttons, text="Aggiorna ora",
                        command=lambda: (win.destroy(), self.install_update(latest))).pack(side="left")
         else:
             ttk.Button(buttons, text="Apri la pagina di download",
@@ -1865,6 +1888,8 @@ class App:
                 return
             if messagebox.askokcancel(APP_NAME, "Versione %s scaricata.\n\nIl programma ora si chiude, si "
                                                 "aggiorna e si riapre da solo." % rel["label"]):
+                self.cfg["updated_from"] = APP_VERSION  # per confermare l'aggiornamento alla riapertura
+                save_config(self.cfg)
                 launch_replacement(new_exe, exe)
                 self.root.destroy()
 
