@@ -12,10 +12,12 @@ In alternativa puoi crearlo tu:
    anche su altri PC Windows che non hanno Python.
 
 In alternativa, senza creare l'exe: doppio clic su RidimensionaImmagini.py
-(prima installa i componenti con:  py -m pip install pillow pillow-heif pymupdf tkinterdnd2).
+(prima installa i componenti con:  py -m pip install pillow pillow-heif tkinterdnd2
+ e poi:  py -m pip install --no-deps pymupdf).
 
 La guida completa si trova nel programma: menu "?" > Guida (oppure tasto F1).
 
 Per la compressione dei PDF il programma usa la libreria PyMuPDF (licenza AGPL).
 
-Autore: Giovanni Orlando - jjjohn7000@gmail.com
+Autore: Giovanni Orlando
+Segnalazioni e suggerimenti: https://github.com/jjjohn7000/ridimensiona-immagini/issues

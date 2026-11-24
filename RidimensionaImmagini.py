@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Ridimensiona Immagini - ridimensionamento in serie di immagini.
-Autore: Giovanni Orlando <jjjohn7000@gmail.com>
+Autore: Giovanni Orlando - https://github.com/jjjohn7000/ridimensiona-immagini
 
 Richiede: Python 3.9+ e Pillow.
 Opzionali: pillow-heif (foto HEIC/HEIF degli iPhone), tkinterdnd2 (trascinamento dei file).
@@ -48,9 +48,8 @@ except Exception:
     pass
 
 APP_NAME = "Ridimensiona Immagini"
-APP_VERSION = "0.9.4 beta"
+APP_VERSION = "0.9.5 beta"
 AUTHOR_NAME = "Giovanni Orlando"
-AUTHOR_EMAIL = "jjjohn7000@gmail.com"
 
 # --------------------------------------------------------------------------- aggiornamenti
 
@@ -62,7 +61,13 @@ EXE_ASSET = "RidimensionaImmagini.exe"
 
 # Novità delle versioni, dalla più recente. La sezione della versione corrente viene usata
 # anche come descrizione della versione pubblicata su GitHub.
-CHANGELOG = """## 0.9.4 beta - 24 novembre 2026
+CHANGELOG = """## 0.9.5 beta - 24 novembre 2026
+- Programma molto più leggero: il file scende da circa 114 MB a circa la metà, quindi si scarica e si aggiorna più in fretta.
+- Tolte dall'eseguibile parti della libreria PDF che il programma non usava (un motore di intelligenza artificiale per riconoscere tabelle); funzioni e risultati restano identici.
+- Ogni nuova versione viene provata automaticamente (immagini, tutti i formati e PDF) prima di essere pubblicata.
+- Nella finestra "Informazioni su", al posto dell'indirizzo email, il link per segnalare problemi o suggerimenti sulla pagina del progetto.
+
+## 0.9.4 beta - 24 novembre 2026
 - Controllo degli aggiornamenti: all'avvio il programma verifica su GitHub se esiste una versione più recente e, se c'è, ne mostra le novità e permette di installarla con un clic.
 - Nel menu "?": "Novità delle versioni", "Controlla aggiornamenti" e l'opzione per attivare o disattivare il controllo all'avvio.
 
@@ -1784,13 +1789,14 @@ class App:
                   justify="center").pack()
         ttk.Separator(body).pack(fill="x", pady=12)
         ttk.Label(body, text=AUTHOR_NAME, font=("Segoe UI", 10, "bold")).pack()
-        mail = tk.Label(body, text=AUTHOR_EMAIL, fg="#1a5fb4", cursor="hand2", font=("Segoe UI", 10, "underline"))
-        mail.pack(pady=(2, 0))
-        mail.bind("<Button-1>", lambda e: webbrowser.open("mailto:" + AUTHOR_EMAIL))
         gh = tk.Label(body, text="Pagina del progetto su GitHub", fg="#1a5fb4", cursor="hand2",
                       font=("Segoe UI", 10, "underline"))
-        gh.pack(pady=(8, 0))
+        gh.pack(pady=(6, 0))
         gh.bind("<Button-1>", lambda e: webbrowser.open(GITHUB_URL))
+        issues = tk.Label(body, text="Segnala un problema o un suggerimento", fg="#1a5fb4", cursor="hand2",
+                          font=("Segoe UI", 10, "underline"))
+        issues.pack(pady=(2, 0))
+        issues.bind("<Button-1>", lambda e: webbrowser.open(GITHUB_URL + "/issues/new"))
         bf = ttk.Frame(body)
         bf.pack(pady=(16, 0))
         ttk.Button(bf, text="Controlla aggiornamenti", command=lambda: (win.destroy(), self.check_updates(True))).pack(side="left")
@@ -2300,7 +2306,73 @@ class App:
             self.update_folder_info()
 
 
+def run_selftest(log_path):
+    """Prova automatica dell'eseguibile (la usa GitHub dopo averlo creato):
+    ridimensionamento, limiti di peso, tutti i formati di uscita e compressione PDF."""
+    import shutil
+    import traceback
+    lines, ok = [], [True]
+
+    def check(name, cond):
+        ok[0] = ok[0] and bool(cond)
+        lines.append(("OK      " if cond else "ERRORE  ") + name)
+
+    tmp = tempfile.mkdtemp(prefix="ri_prova_")
+    try:
+        src, out = os.path.join(tmp, "in"), os.path.join(tmp, "out")
+        os.makedirs(src)
+        img = Image.effect_noise((1600, 1200), 40).convert("RGB")
+        img.save(os.path.join(src, "foto.jpg"), quality=95)
+        img.save(os.path.join(src, "foto.png"))
+        try:
+            img.save(os.path.join(src, "foto.heic"), quality=90)
+        except Exception as e:
+            check("scrittura HEIC: %s" % e, False)
+        jobs = [(os.path.join(src, f), out) for f in sorted(os.listdir(src))]
+        base = dict(resize=True, tw=800, th=800, mode="fit", no_upscale=True, per_file=False, max_kb=100,
+                    total=False, total_bytes=0, allow_shrink=True, out_fmt=ORIGINAL, weight_fmt="JPEG",
+                    quality=85, suffix="_a")
+        n, err, _, _ = process_all(jobs, base)
+        check("ridimensionamento in pixel: %d di %d %s" % (n, len(jobs), err or ""), n == len(jobs) and not err)
+        n, err, info, _ = process_all(jobs, dict(base, total=True, total_bytes=150 * 1024, suffix="_b"))
+        tot = sum(os.path.getsize(os.path.join(out, f)) for f in os.listdir(out) if "_b" in f)
+        check("peso totale 150 KB: %s" % info, n == len(jobs) and not err and tot <= 150 * 1024)
+        small = img.resize((64, 48))
+        for label, fmt, _ext, _q, _a in OUT_FORMATS:
+            try:
+                check("formato %s" % label, len(encode(small, fmt, 80)) > 0)
+            except Exception as e:
+                check("formato %s: %s" % (label, e), False)
+        if HAS_PDF:
+            pdf = os.path.join(src, "documento.pdf")
+            doc = pymupdf.open()
+            page = doc.new_page()
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=95)
+            page.insert_image(page.rect, stream=buf.getvalue())
+            page.insert_text((72, 72), "Prova")
+            doc.save(pdf)
+            doc.close()
+            n, err, info, _ = process_pdfs([(pdf, out)], dict(dpi=100, quality=60, color="color", target=False,
+                                                              target_bytes=0, clean_meta=True, suffix="_c"))
+            res = os.path.join(out, "documento_c.pdf")
+            check("compressione PDF: %s" % info,
+                  n == 1 and not err and os.path.getsize(res) < os.path.getsize(pdf))
+        else:
+            check("libreria PDF presente", False)
+    except Exception:
+        check("errore imprevisto:\n" + traceback.format_exc(), False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    lines.append("TUTTO OK" if ok[0] else "PROBLEMI")
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("%s %s\n" % (APP_NAME, APP_VERSION) + "\n".join(lines) + "\n")
+    return 0 if ok[0] else 1
+
+
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "--autotest":
+        sys.exit(run_selftest(sys.argv[2]))
     if sys.platform == "win32":
         try:  # testo nitido sugli schermi ad alta risoluzione
             import ctypes

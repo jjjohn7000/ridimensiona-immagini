@@ -29,11 +29,17 @@ Il programma controlla da solo, all'avvio, se è disponibile una versione più r
 Il programma è un unico file Python: `RidimensionaImmagini.py` (Python 3.9 o successivo).
 
 ```
-py -m pip install pillow pillow-heif pymupdf tkinterdnd2
+py -m pip install pillow pillow-heif tkinterdnd2
+py -m pip install --no-deps pymupdf
 py RidimensionaImmagini.py
 ```
 
-Per creare l'eseguibile su Windows basta avviare `Crea_EXE.bat`.
+`pymupdf` va installato con `--no-deps`: le sue dipendenze (onnxruntime, numpy, networkx) servono solo per
+funzioni di analisi dell'impaginazione che il programma non usa, e renderebbero l'eseguibile più pesante di
+oltre 50 MB.
+
+Per creare l'eseguibile su Windows basta avviare `Crea_EXE.bat`, che usa `RidimensionaImmagini.spec` e alla fine
+esegue la prova automatica (`RidimensionaImmagini.exe --autotest risultato.txt`).
 
 ### Pubblicare una nuova versione
 

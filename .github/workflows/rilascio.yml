@@ -52,13 +52,27 @@ jobs:
 
       - name: Installa i componenti
         if: steps.check.outputs.nuova == 'si'
-        run: python -m pip install --upgrade pip pillow pillow-heif pymupdf tkinterdnd2 pyinstaller
+        run: |
+          python -m pip install --upgrade pip pillow pillow-heif tkinterdnd2 pyinstaller
+          # PyMuPDF senza le librerie aggiuntive che il programma non usa
+          python -m pip install --upgrade --no-deps pymupdf
 
       - name: Crea l'eseguibile
         if: steps.check.outputs.nuova == 'si'
         run: |
           python crea_version_info.py
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name RidimensionaImmagini --version-file version_info.txt --collect-all tkinterdnd2 --collect-all pillow_heif --collect-all pymupdf RidimensionaImmagini.py
+          python -m PyInstaller --noconfirm --clean RidimensionaImmagini.spec
+
+      - name: Prova automatica dell'eseguibile (immagini, formati, PDF)
+        if: steps.check.outputs.nuova == 'si'
+        shell: pwsh
+        run: |
+          $mb = [math]::Round((Get-Item dist\RidimensionaImmagini.exe).Length / 1MB, 1)
+          Write-Host "Dimensione dell'eseguibile: $mb MB"
+          $log = Join-Path $PWD "prova_automatica.txt"
+          $p = Start-Process dist\RidimensionaImmagini.exe -ArgumentList "--autotest", "`"$log`"" -PassThru -Wait
+          Get-Content $log
+          if ($p.ExitCode -ne 0) { throw "La prova automatica non è riuscita" }
 
       - name: Prova di avvio dell'eseguibile
         if: steps.check.outputs.nuova == 'si'
