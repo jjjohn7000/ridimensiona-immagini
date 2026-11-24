@@ -13,11 +13,15 @@ import math
 import os
 import queue
 import re
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 import zlib
@@ -48,7 +52,7 @@ except Exception:
     pass
 
 APP_NAME = "Ridimensiona Immagini"
-APP_VERSION = "0.9.5 beta"
+APP_VERSION = "0.9.6 beta"
 AUTHOR_NAME = "Giovanni Orlando"
 
 # --------------------------------------------------------------------------- aggiornamenti
@@ -61,7 +65,11 @@ EXE_ASSET = "RidimensionaImmagini.exe"
 
 # Novità delle versioni, dalla più recente. La sezione della versione corrente viene usata
 # anche come descrizione della versione pubblicata su GitHub.
-CHANGELOG = """## 0.9.5 beta - 24 novembre 2026
+CHANGELOG = """## 0.9.6 beta - 24 novembre 2026
+- Controllo degli aggiornamenti più affidabile: se il servizio principale di GitHub non risponde (per esempio perché la rete di un ufficio ha superato il limite di 60 controlli all'ora), il programma usa una seconda strada.
+- Se il controllo non riesce, il messaggio spiega il motivo preciso (nessuna connessione, limite di GitHub, antivirus o rete aziendale che bloccano, proxy, tempo scaduto) e propone di aprire la pagina delle versioni.
+
+## 0.9.5 beta - 24 novembre 2026
 - Programma molto più leggero: il file scende da circa 114 MB a circa la metà, quindi si scarica e si aggiorna più in fretta.
 - Tolte dall'eseguibile parti della libreria PDF che il programma non usava (un motore di intelligenza artificiale per riconoscere tabelle); funzioni e risultati restano identici.
 - Ogni nuova versione viene provata automaticamente (immagini, tutti i formati e PDF) prima di essere pubblicata.
@@ -170,9 +178,97 @@ def italian_date(iso):
     return "%d %s %d" % (d, MESI[mo - 1], y) if 1 <= mo <= 12 else ""
 
 
+class NoReleases(Exception):
+    """Su GitHub non è ancora pubblicata nessuna versione."""
+
+
+def fetch_latest_via_web():
+    """Seconda strada: legge l'ultima versione dalla normale pagina web di GitHub (senza il limite
+    di 60 controlli all'ora del servizio usato di solito). Non fornisce le novità, solo numero e file."""
+    with _http_open(RELEASES_URL + "/latest", accept="text/html") as r:
+        final = r.geturl()  # GitHub reindirizza a .../releases/tag/<etichetta>
+    m = re.search(r"/releases/tag/([^/?#]+)/?$", final)
+    if not m:
+        raise NoReleases()
+    tag = urllib.parse.unquote(m.group(1))
+    base = RELEASES_URL + "/download/" + urllib.parse.quote(tag) + "/"
+    return [{
+        "version": parse_version(tag),
+        "label": tag.lstrip("vV").replace("-", " "),
+        "notes": "",
+        "url": final,
+        "date": "",
+        "exe": base + EXE_ASSET,
+        "exe_size": 0,
+        "sha": base + EXE_ASSET + ".sha256",
+    }]
+
+
 def newer_releases():
+    """Versioni più recenti di quella in uso. Se il servizio principale di GitHub non risponde
+    (limite di controlli, blocco della rete...), prova la seconda strada."""
+    try:
+        releases = fetch_releases()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise NoReleases()
+        first_error = e
+        releases = None
+    except Exception as e:
+        first_error = e
+        releases = None
+    if releases is None:
+        try:
+            releases = fetch_latest_via_web()
+        except NoReleases:
+            raise
+        except Exception:
+            raise first_error
+    if not releases:
+        raise NoReleases()
     current = parse_version(APP_VERSION)
-    return [r for r in fetch_releases() if r["version"] > current]
+    return [r for r in releases if r["version"] > current]
+
+
+def describe_net_error(e):
+    """Spiega in italiano perché il collegamento a GitHub non è riuscito."""
+    reason = getattr(e, "reason", None)
+    text = str(reason if reason is not None else e)
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 429 or (e.code == 403 and e.headers.get("X-RateLimit-Remaining") == "0"):
+            when = ""
+            try:
+                when = " (dalle %s)" % time.strftime("%H:%M", time.localtime(int(e.headers.get("X-RateLimit-Reset"))))
+            except (TypeError, ValueError):
+                pass
+            return ("GitHub ha raggiunto il numero massimo di controlli consentiti da questa rete senza account "
+                    "(60 all'ora per indirizzo Internet; in un ufficio l'indirizzo è condiviso da tutti). "
+                    "Riprova più tardi%s." % when)
+        if e.code == 407:
+            return ("La rete usa un proxy che richiede l'accesso: chiedi all'amministratore di rete di consentire "
+                    "il collegamento a github.com e api.github.com.")
+        return "GitHub ha risposto con un errore (codice %d)." % e.code
+    if isinstance(reason, ssl.SSLCertVerificationError) or isinstance(e, ssl.SSLCertVerificationError) \
+            or "CERTIFICATE_VERIFY_FAILED" in text:
+        return ("Il certificato di sicurezza di GitHub non è stato accettato. Succede di solito quando un antivirus "
+                "o la rete aziendale controllano le connessioni sicure: prova ad aggiungere il programma alle "
+                "eccezioni dell'antivirus, oppure chiedi all'amministratore di rete.")
+    if isinstance(reason, ssl.SSLError) or isinstance(e, ssl.SSLError):
+        return "La connessione sicura con GitHub non è riuscita (%s)." % text
+    if "407" in text or "Tunnel connection failed" in text or "proxy" in text.lower():
+        return ("La rete usa un proxy che non consente il collegamento a GitHub: chiedi all'amministratore di rete "
+                "di consentire github.com e api.github.com.")
+    if isinstance(reason, socket.gaierror) or isinstance(e, socket.gaierror):
+        return "Il computer non riesce a trovare GitHub: probabilmente non è collegato a Internet."
+    if isinstance(reason, (TimeoutError, socket.timeout)) or isinstance(e, (TimeoutError, socket.timeout)) \
+            or "timed out" in text:
+        return ("GitHub non ha risposto in tempo: la connessione potrebbe essere lenta, oppure bloccata da un "
+                "firewall o da un antivirus.")
+    if isinstance(reason, (ConnectionRefusedError, ConnectionResetError, ConnectionAbortedError)) \
+            or isinstance(e, (ConnectionRefusedError, ConnectionResetError, ConnectionAbortedError)):
+        return ("Il collegamento a GitHub è stato rifiutato o interrotto: potrebbe bloccarlo un firewall "
+                "o un antivirus.")
+    return "Errore di connessione: %s" % text
 
 
 def download_file(url, dest, progress=lambda done, total: None):
@@ -447,7 +543,8 @@ Dal menu "?" puoi anche:
 - Novità delle versioni: l'elenco delle novità di tutte le versioni.
 - Controlla aggiornamenti: controlla subito, in qualsiasi momento.
 - Controlla gli aggiornamenti all'avvio: togli la spunta per disattivare il controllo automatico.
-Per il controllo serve la connessione a Internet: senza connessione il programma funziona normalmente e semplicemente non controlla. Non viene inviato nessun dato personale né alcuna informazione sui tuoi file.
+Per il controllo serve la connessione a Internet, ma non serve un account GitHub. Senza connessione il programma funziona normalmente e semplicemente non controlla.
+Se con "Controlla aggiornamenti" il controllo non riesce, il messaggio spiega il motivo: nessuna connessione, limite di controlli di GitHub (60 all'ora per ogni indirizzo Internet, condiviso da tutti i computer di un ufficio), antivirus o rete aziendale che bloccano il collegamento, proxy, tempo scaduto. In ogni caso puoi aprire la pagina delle versioni nel browser e scaricare a mano la versione più recente. Non viene inviato nessun dato personale né alcuna informazione sui tuoi file.
 Se il programma si trova in una cartella protetta (per esempio "Programmi"), la nuova versione viene scaricata nella cartella Download e va copiata a mano al posto di quella vecchia.
 
 # Formati supportati
@@ -1636,10 +1733,8 @@ class App:
         def work():
             try:
                 state["newer"] = newer_releases()
-            except urllib.error.HTTPError as e:
-                state["error"] = e.code
             except Exception as e:
-                state["error"] = str(e)
+                state["error"] = e
 
         threading.Thread(target=work, daemon=True).start()
         if manual and not self.running:
@@ -1654,11 +1749,12 @@ class App:
                 self.status.set("Pronto.")
             if "error" in state:
                 if manual:
-                    if state["error"] == 404:
+                    if isinstance(state["error"], NoReleases):
                         messagebox.showinfo(APP_NAME, "Su GitHub non è ancora stata pubblicata nessuna versione.")
-                    else:
-                        messagebox.showwarning(APP_NAME, "Non è stato possibile controllare gli aggiornamenti.\n"
-                                                         "Verifica la connessione a Internet e riprova.")
+                    elif messagebox.askyesno(APP_NAME, "Non è stato possibile controllare gli aggiornamenti.\n\n%s\n\n"
+                                                       "Vuoi aprire la pagina delle versioni nel browser per "
+                                                       "controllare a mano?" % describe_net_error(state["error"])):
+                        webbrowser.open(RELEASES_URL)
                 return
             newer = state["newer"]
             if not newer:
@@ -1678,7 +1774,7 @@ class App:
         txt.insert("end", "È disponibile la versione %s\n" % latest["label"], "title")
         txt.insert("end", "Tu hai la versione %s. Ecco le novità:\n" % APP_VERSION, "small")
         for rel in newer:
-            notes = rel["notes"].strip() or "- (nessuna descrizione)"
+            notes = rel["notes"].strip() or "Le novità di questa versione sono descritte nella sua pagina su GitHub."
             if not notes.lstrip().startswith("#"):
                 notes = "## %s%s\n%s" % (rel["label"], " - " + rel["date"] if rel["date"] else "", notes)
             insert_markup(txt, notes)
@@ -1739,8 +1835,8 @@ class App:
                 os.replace(part, new_exe)
                 state["ok"] = True
             except Exception as e:
-                state["error"] = friendly_error(e) if not isinstance(e, urllib.error.URLError) else \
-                    "connessione non riuscita"
+                net = isinstance(e, (urllib.error.URLError, OSError)) and not isinstance(e, FileNotFoundError)
+                state["error"] = describe_net_error(e).rstrip(".") if net else friendly_error(e)
                 try:
                     os.remove(part)
                 except OSError:
