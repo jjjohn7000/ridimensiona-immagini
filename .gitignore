@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+version_info.txt
+note_versione.md
+RidimensionaImmagini.exe

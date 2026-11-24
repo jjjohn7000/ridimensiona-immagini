@@ -1,0 +1,74 @@
+# Crea RidimensionaImmagini.exe su Windows e pubblica la versione su GitHub.
+# Si avvia da solo quando viene caricata un'etichetta (tag) come "v0.9.4-beta".
+name: Crea e pubblica la versione
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Controlla che la versione del programma corrisponda all'etichetta
+        shell: python
+        run: |
+          import os, re, sys
+          tag = os.environ["GITHUB_REF_NAME"]
+          src = open("RidimensionaImmagini.py", encoding="utf-8").read()
+          ver = re.search(r'^APP_VERSION = "([^"]+)"', src, re.M).group(1)
+          norm = lambda s: (re.findall(r"\d+", s)[:3], "beta" in s.lower())
+          if norm(ver) != norm(tag):
+              sys.exit(f"APP_VERSION ({ver}) non corrisponde all'etichetta {tag}")
+          print("Versione", ver)
+
+      - name: Installa i componenti
+        run: python -m pip install --upgrade pip pillow pillow-heif pymupdf tkinterdnd2 pyinstaller
+
+      - name: Crea l'eseguibile
+        run: |
+          python crea_version_info.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name RidimensionaImmagini --version-file version_info.txt --collect-all tkinterdnd2 --collect-all pillow_heif --collect-all pymupdf RidimensionaImmagini.py
+
+      - name: Prova di avvio dell'eseguibile
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\RidimensionaImmagini.exe -PassThru
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { throw "L'eseguibile si è chiuso subito (codice $($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "L'eseguibile si avvia correttamente"
+
+      - name: Impronta SHA-256 e note della versione
+        shell: python
+        run: |
+          import hashlib, os, re
+          exe = "dist/RidimensionaImmagini.exe"
+          digest = hashlib.sha256(open(exe, "rb").read()).hexdigest()
+          open(exe + ".sha256", "w").write(digest + "  RidimensionaImmagini.exe\n")
+          src = open("RidimensionaImmagini.py", encoding="utf-8").read()
+          log = re.search(r'CHANGELOG = """(.*?)"""', src, re.S).group(1)
+          section = re.split(r"(?m)^## ", log)[1]          # la versione più recente
+          title, _, body = section.partition("\n")
+          notes = "## Novità della versione " + title.strip() + "\n\n" + body.strip() + "\n"
+          notes += "\n---\nScarica **RidimensionaImmagini.exe** qui sotto (sezione *Assets*) e avvialo: non serve installare nulla.\n"
+          notes += "Chi ha già il programma riceve l'aggiornamento automaticamente all'avvio.\n"
+          open("note_versione.md", "w", encoding="utf-8").write(notes)
+          print(notes)
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Ridimensiona Immagini ${{ github.ref_name }}
+          body_path: note_versione.md
+          files: |
+            dist/RidimensionaImmagini.exe
+            dist/RidimensionaImmagini.exe.sha256

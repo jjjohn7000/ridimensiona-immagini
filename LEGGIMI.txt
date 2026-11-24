@@ -1,0 +1,21 @@
+RIDIMENSIONA IMMAGINI - come ottenere il file .exe
+
+Il modo più semplice: scarica RidimensionaImmagini.exe già pronto da
+https://github.com/jjjohn7000/ridimensiona-immagini/releases/latest
+
+In alternativa puoi crearlo tu:
+
+1. Installa Python da https://www.python.org/downloads/
+   (durante l'installazione spunta "Add python.exe to PATH").
+2. Fai doppio clic su Crea_EXE.bat e attendi un paio di minuti.
+3. Nella cartella compare RidimensionaImmagini.exe: puoi copiarlo dove vuoi,
+   anche su altri PC Windows che non hanno Python.
+
+In alternativa, senza creare l'exe: doppio clic su RidimensionaImmagini.py
+(prima installa i componenti con:  py -m pip install pillow pillow-heif pymupdf tkinterdnd2).
+
+La guida completa si trova nel programma: menu "?" > Guida (oppure tasto F1).
+
+Per la compressione dei PDF il programma usa la libreria PyMuPDF (licenza AGPL).
+
+Autore: Giovanni Orlando - jjjohn7000@gmail.com
