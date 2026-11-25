@@ -72,18 +72,27 @@ def components_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def nuitka_cache_dir():
+    """Cartella in cui le versioni create con Nuitka (0.9.8 e 0.9.9) estraevano i componenti."""
+    return os.path.join(os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME")
+                        or os.path.join(os.path.expanduser("~"), ".cache"), "RidimensionaImmagini")
+
+
 def clean_old_extractions():
     """Con Nuitka i componenti vengono estratti una volta per versione, in una cartella per versione:
-    elimina quelle delle versioni precedenti, che non servono più."""
+    elimina quelle delle versioni precedenti, che non servono più.
+    Con PyInstaller quella cartella non serve affatto: viene eliminata per intero (lasciata dalla 0.9.8 e 0.9.9)."""
     if not IS_NUITKA:
+        if IS_PACKAGED and os.environ.get("LOCALAPPDATA"):
+            import shutil
+            shutil.rmtree(nuitka_cache_dir(), ignore_errors=True)
         return
     try:
         here = components_dir()
         parent = os.path.dirname(here)
         # Per sicurezza si lavora solo nella nostra cartella. Il confronto è sulla cartella vera e non sul nome,
         # perché Windows può indicarla con il nome breve (es. RIDIME~1).
-        expected = os.path.join(os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME")
-                                or os.path.join(os.path.expanduser("~"), ".cache"), "RidimensionaImmagini")
+        expected = nuitka_cache_dir()
         if not os.path.isdir(expected) or not os.path.samefile(parent, expected):
             return
         import shutil
@@ -96,7 +105,7 @@ def clean_old_extractions():
 
 
 APP_NAME = "Ridimensiona Immagini"
-APP_VERSION = "0.9.9 beta"
+APP_VERSION = "0.9.10 beta"
 AUTHOR_NAME = "Giovanni Orlando"
 
 # --------------------------------------------------------------------------- aggiornamenti
@@ -109,7 +118,11 @@ EXE_ASSET = "RidimensionaImmagini.exe"
 
 # Novità delle versioni, dalla più recente. La sezione della versione corrente viene usata
 # anche come descrizione della versione pubblicata su GitHub.
-CHANGELOG = """## 0.9.9 beta - 25 novembre 2026
+CHANGELOG = """## 0.9.10 beta - 25 novembre 2026
+- Il programma torna a essere creato come nelle versioni fino alla 0.9.7 (PyInstaller): non lascia più componenti sul disco tra un avvio e l'altro.
+- Al primo avvio viene eliminata la cartella dei componenti lasciata dalle versioni 0.9.8 e 0.9.9 (circa 170 MB in AppData\\Local\\RidimensionaImmagini).
+
+## 0.9.9 beta - 25 novembre 2026
 - Corretta l'eliminazione automatica dei componenti delle versioni precedenti, che su Windows poteva non avvenire (circa 170 MB di spazio per ogni versione).
 
 ## 0.9.8 beta - 25 novembre 2026
@@ -2553,6 +2566,11 @@ def run_selftest(log_path):
             clean_old_extractions()
             check("pulizia dei componenti delle versioni precedenti",
                   not os.path.exists(old) and os.path.isdir(components_dir()))
+        elif IS_PACKAGED and os.environ.get("LOCALAPPDATA"):  # cartella lasciata dalle versioni Nuitka
+            os.makedirs(os.path.join(nuitka_cache_dir(), "0.9.9.0", "prova"), exist_ok=True)
+            clean_old_extractions()
+            check("pulizia dei componenti lasciati dalle versioni 0.9.8 e 0.9.9",
+                  not os.path.exists(nuitka_cache_dir()))
     except Exception:
         check("errore imprevisto:\n" + traceback.format_exc(), False)
     finally:

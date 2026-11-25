@@ -3,9 +3,8 @@
 # non ancora pubblicato; se la versione esiste già non fa nulla.
 # Si può avviare anche a mano dalla scheda "Actions".
 #
-# L'eseguibile è compilato con Nuitka: i componenti vengono estratti una sola volta per versione
-# (in %LOCALAPPDATA%\RidimensionaImmagini\<versione>), quindi dal secondo avvio l'apertura è rapida.
-# Dopo la creazione viene eseguita la prova automatica e misurato il tempo di apertura.
+# L'eseguibile è creato con PyInstaller (RidimensionaImmagini.spec). Dopo la creazione viene eseguita
+# la prova automatica e misurato il tempo di apertura.
 name: Crea e pubblica la versione
 
 on:
@@ -66,31 +65,17 @@ jobs:
       - name: Installa i componenti
         if: steps.check.outputs.nuova == 'si'
         run: |
-          python -m pip install --upgrade pip pillow pillow-heif tkinterdnd2 nuitka ordered-set zstandard
+          python -m pip install --upgrade pip pillow pillow-heif tkinterdnd2 pyinstaller
           # PyMuPDF senza le librerie aggiuntive che il programma non usa
           python -m pip install --upgrade --no-deps pymupdf
 
-      - name: Crea l'eseguibile con Nuitka
+      - name: Crea l'eseguibile con PyInstaller
         if: steps.check.outputs.nuova == 'si'
         run: |
-          $dnd = python -c "import tkinterdnd2, os; print(os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd'))"
-          # pymupdf incluso come bytecode, non compilato: il suo modulo mupdf.py (2,4 milioni di righe in C)
-          # esaurisce la memoria dei compilatori. È solo un collegamento al motore PDF, che è già in C.
-          python -m nuitka --onefile --assume-yes-for-downloads --msvc=latest --lto=no `
-            --noinclude-custom-mode=pymupdf:bytecode `
-            --windows-console-mode=disable --enable-plugin=tk-inter `
-            --onefile-tempdir-spec="{CACHE_DIR}/RidimensionaImmagini/{VERSION}" `
-            --include-package-data=tkinterdnd2 --include-data-dir="$dnd=tkinterdnd2/tkdnd" `
-            --include-package=pillow_heif --include-package-data=pillow_heif `
-            --nofollow-import-to=numpy,onnxruntime,networkx,pymupdf.layout,pymupdf4llm,pandas,matplotlib,scipy,IPython,yaml,tabulate,psutil `
-            --company-name="Giovanni Orlando" --product-name="Ridimensiona Immagini" `
-            --file-description="Ridimensiona Immagini" --copyright="Giovanni Orlando - licenza AGPL-3.0" `
-            --file-version=${{ steps.ver.outputs.v4 }} --product-version=${{ steps.ver.outputs.v4 }} `
-            --output-dir=build_nuitka --output-filename=RidimensionaImmagini.exe RidimensionaImmagini.py
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item build_nuitka\RidimensionaImmagini.exe dist\RidimensionaImmagini.exe
+          python crea_version_info.py
+          python -m PyInstaller --noconfirm --clean RidimensionaImmagini.spec
           $mb = [math]::Round((Get-Item dist\RidimensionaImmagini.exe).Length / 1MB, 1)
-          Write-Host "Dimensione dell'eseguibile Nuitka: $mb MB"
+          Write-Host "Dimensione dell'eseguibile: $mb MB"
 
       - name: Prova automatica dell'eseguibile (immagini, formati, PDF, trascinamento)
         if: steps.check.outputs.nuova == 'si'
@@ -124,14 +109,12 @@ jobs:
             Start-Sleep -Seconds 2
             return [math]::Round($t, 2)
           }
-          Remove-Item "$env:LOCALAPPDATA\RidimensionaImmagini" -Recurse -Force -ErrorAction SilentlyContinue
-          $nk = @(1..4 | ForEach-Object { Misura (Resolve-Path dist\RidimensionaImmagini.exe).Path })
-          $nkFirst = [math]::Round($nk[0], 1)
-          $nkNext = [math]::Round(($nk[1..3] | Measure-Object -Average).Average, 1)
-          $txt = "Primo avvio $($nk[0]) s, avvii successivi $($nk[1..3] -join ' / ') s"
+          $t = @(1..4 | ForEach-Object { Misura (Resolve-Path dist\RidimensionaImmagini.exe).Path })
+          $avg = [math]::Round(($t | Measure-Object -Average).Average, 1)
+          $txt = "Tempi di apertura: $($t -join ' / ') s"
           Write-Host $txt
           "### Tempo di apertura`n``````n$txt`n``````" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
-          "Tempo di apertura misurato su un PC Windows di GitHub: primo avvio dopo l'aggiornamento circa $nkFirst s, avvii successivi circa $nkNext s." | Out-File tempi_avvio.txt -Encoding utf8
+          "Tempo di apertura misurato su un PC Windows di GitHub: circa $avg s." | Out-File tempi_avvio.txt -Encoding utf8
 
       - name: Prova di avvio dell'eseguibile
         if: steps.check.outputs.nuova == 'si'
