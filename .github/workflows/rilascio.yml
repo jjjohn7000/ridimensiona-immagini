@@ -75,8 +75,10 @@ jobs:
         if: steps.check.outputs.nuova == 'si'
         run: |
           $dnd = python -c "import tkinterdnd2, os; print(os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd'))"
-          # Compilatore GCC (MinGW64): quello di Microsoft esaurisce la memoria sulla libreria PDF (2,4 milioni di righe)
-          python -m nuitka --onefile --assume-yes-for-downloads --mingw64 --lto=no `
+          # pymupdf incluso come bytecode, non compilato: il suo modulo mupdf.py (2,4 milioni di righe in C)
+          # esaurisce la memoria dei compilatori. È solo un collegamento al motore PDF, che è già in C.
+          python -m nuitka --onefile --assume-yes-for-downloads --msvc=latest --lto=no `
+            --noinclude-custom-mode=pymupdf:bytecode `
             --windows-console-mode=disable --enable-plugin=tk-inter `
             --onefile-tempdir-spec="{CACHE_DIR}/RidimensionaImmagini/{VERSION}" `
             --include-package-data=tkinterdnd2 --include-data-dir="$dnd=tkinterdnd2/tkdnd" `
