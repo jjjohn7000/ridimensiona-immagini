@@ -80,19 +80,23 @@ def clean_old_extractions():
     try:
         here = components_dir()
         parent = os.path.dirname(here)
-        if os.path.basename(parent) != "RidimensionaImmagini":  # per sicurezza: solo nella nostra cartella
+        # Per sicurezza si lavora solo nella nostra cartella. Il confronto è sulla cartella vera e non sul nome,
+        # perché Windows può indicarla con il nome breve (es. RIDIME~1).
+        expected = os.path.join(os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME")
+                                or os.path.join(os.path.expanduser("~"), ".cache"), "RidimensionaImmagini")
+        if not os.path.isdir(expected) or not os.path.samefile(parent, expected):
             return
         import shutil
         for name in os.listdir(parent):
             path = os.path.join(parent, name)
-            if os.path.normcase(path) != os.path.normcase(here) and os.path.isdir(path):
+            if os.path.isdir(path) and not os.path.samefile(path, here):
                 shutil.rmtree(path, ignore_errors=True)  # una versione ancora aperta resta: ci si riproverà
     except Exception:
         pass
 
 
 APP_NAME = "Ridimensiona Immagini"
-APP_VERSION = "0.9.8 beta"
+APP_VERSION = "0.9.9 beta"
 AUTHOR_NAME = "Giovanni Orlando"
 
 # --------------------------------------------------------------------------- aggiornamenti
@@ -105,8 +109,12 @@ EXE_ASSET = "RidimensionaImmagini.exe"
 
 # Novità delle versioni, dalla più recente. La sezione della versione corrente viene usata
 # anche come descrizione della versione pubblicata su GitHub.
-CHANGELOG = """## 0.9.8 beta - 25 novembre 2026
-- Apertura molto più rapida: il programma ora è compilato con Nuitka e prepara i suoi componenti una sola volta per versione, invece che a ogni avvio. Il primo avvio dopo un aggiornamento resta un po' più lento, i successivi sono molto più veloci.
+CHANGELOG = """## 0.9.9 beta - 25 novembre 2026
+- Corretta l'eliminazione automatica dei componenti delle versioni precedenti, che su Windows poteva non avvenire (circa 170 MB di spazio per ogni versione).
+
+## 0.9.8 beta - 25 novembre 2026
+- Apertura molto più rapida: il programma ora è compilato con Nuitka e prepara i suoi componenti una sola volta per versione, invece che a ogni avvio. Misurato su Windows: circa 0,7 secondi dal secondo avvio in poi, contro circa 2,8 secondi a ogni avvio prima.
+- File più leggero: da 46,6 a 31,3 MB.
 - I componenti delle versioni precedenti vengono eliminati automaticamente.
 
 ## 0.9.7 beta - 24 novembre 2026
@@ -2539,6 +2547,12 @@ def run_selftest(log_path):
             check("trascinamento dei file: libreria tkinterdnd2 assente", False)
         lines.append("INFO    percorso del programma: %s" % program_path())
         lines.append("INFO    cartella dei componenti: %s" % components_dir())
+        if IS_NUITKA:  # la pulizia deve eliminare i componenti delle versioni precedenti, non quelli in uso
+            old = os.path.join(os.path.dirname(components_dir()), "0.0.1.0")
+            os.makedirs(os.path.join(old, "prova"), exist_ok=True)
+            clean_old_extractions()
+            check("pulizia dei componenti delle versioni precedenti",
+                  not os.path.exists(old) and os.path.isdir(components_dir()))
     except Exception:
         check("errore imprevisto:\n" + traceback.format_exc(), False)
     finally:

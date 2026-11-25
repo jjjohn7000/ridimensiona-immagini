@@ -5,7 +5,7 @@
 #
 # L'eseguibile è compilato con Nuitka: i componenti vengono estratti una sola volta per versione
 # (in %LOCALAPPDATA%\RidimensionaImmagini\<versione>), quindi dal secondo avvio l'apertura è rapida.
-# Per confronto viene creata anche la versione con PyInstaller (non pubblicata) e se ne misura l'apertura.
+# Dopo la creazione viene eseguita la prova automatica e misurato il tempo di apertura.
 name: Crea e pubblica la versione
 
 on:
@@ -59,17 +59,9 @@ jobs:
       - name: Installa i componenti
         if: steps.check.outputs.nuova == 'si'
         run: |
-          python -m pip install --upgrade pip pillow pillow-heif tkinterdnd2 pyinstaller nuitka ordered-set zstandard
+          python -m pip install --upgrade pip pillow pillow-heif tkinterdnd2 nuitka ordered-set zstandard
           # PyMuPDF senza le librerie aggiuntive che il programma non usa
           python -m pip install --upgrade --no-deps pymupdf
-
-      - name: Crea l'eseguibile con PyInstaller (solo per confronto)
-        if: steps.check.outputs.nuova == 'si'
-        run: |
-          python crea_version_info.py
-          python -m PyInstaller --noconfirm --clean RidimensionaImmagini.spec
-          New-Item -ItemType Directory -Force confronto | Out-Null
-          Move-Item dist\RidimensionaImmagini.exe confronto\RidimensionaImmagini_pyinstaller.exe
 
       - name: Crea l'eseguibile con Nuitka
         if: steps.check.outputs.nuova == 'si'
@@ -127,16 +119,12 @@ jobs:
           }
           Remove-Item "$env:LOCALAPPDATA\RidimensionaImmagini" -Recurse -Force -ErrorAction SilentlyContinue
           $nk = @(1..4 | ForEach-Object { Misura (Resolve-Path dist\RidimensionaImmagini.exe).Path })
-          $pi = @(1..4 | ForEach-Object { Misura (Resolve-Path confronto\RidimensionaImmagini_pyinstaller.exe).Path })
+          $nkFirst = [math]::Round($nk[0], 1)
           $nkNext = [math]::Round(($nk[1..3] | Measure-Object -Average).Average, 1)
-          $piAvg = [math]::Round(($pi[1..3] | Measure-Object -Average).Average, 1)
-          $txt = "Nuitka: primo avvio $($nk[0]) s, avvii successivi $($nk[1..3] -join ' / ') s`nPyInstaller: $($pi -join ' / ') s"
+          $txt = "Primo avvio $($nk[0]) s, avvii successivi $($nk[1..3] -join ' / ') s"
           Write-Host $txt
           "### Tempo di apertura`n``````n$txt`n``````" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
-          $nkFirst = [math]::Round($nk[0], 1)
-          "Tempo di apertura misurato su un PC Windows di GitHub: primo avvio dopo l'aggiornamento circa $nkFirst s, avvii successivi circa $nkNext s (con il metodo precedente: circa $piAvg s a ogni avvio)." | Out-File tempi_avvio.txt -Encoding utf8
-          $nk -join ";" | Out-File tempi_nuitka.txt -Encoding ascii
-          $pi -join ";" | Out-File tempi_pyinstaller.txt -Encoding ascii
+          "Tempo di apertura misurato su un PC Windows di GitHub: primo avvio dopo l'aggiornamento circa $nkFirst s, avvii successivi circa $nkNext s." | Out-File tempi_avvio.txt -Encoding utf8
 
       - name: Prova di avvio dell'eseguibile
         if: steps.check.outputs.nuova == 'si'
