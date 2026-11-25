@@ -38,7 +38,11 @@ py RidimensionaImmagini.py
 funzioni di analisi dell'impaginazione che il programma non usa, e renderebbero l'eseguibile più pesante di
 oltre 50 MB.
 
-Per creare l'eseguibile su Windows basta avviare `Crea_EXE.bat`, che usa `RidimensionaImmagini.spec` e alla fine
+Le versioni pubblicate su GitHub sono compilate con [Nuitka](https://nuitka.net/): i componenti vengono estratti una
+sola volta per versione in `%LOCALAPPDATA%\RidimensionaImmagini\<versione>`, così dal secondo avvio l'apertura è più
+rapida (vedi `.github/workflows/rilascio.yml`).
+
+Per creare l'eseguibile su Windows in modo semplice basta avviare `Crea_EXE.bat`, che usa `RidimensionaImmagini.spec` e alla fine
 esegue la prova automatica (`RidimensionaImmagini.exe --autotest risultato.txt`).
 
 ### Pubblicare una nuova versione

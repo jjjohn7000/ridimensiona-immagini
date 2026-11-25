@@ -51,8 +51,48 @@ try:
 except Exception:
     pass
 
+# Come è stato creato il programma: compilato con Nuitka, impacchettato con PyInstaller, oppure script Python
+IS_NUITKA = "__compiled__" in globals()
+IS_PACKAGED = IS_NUITKA or bool(getattr(sys, "frozen", False))
+SKIP_STARTUP_CHECK = False  # vero durante la misura del tempo di apertura
+
+
+def program_path():
+    """Percorso dell'exe (o dello script) avviato dall'utente: è il file che l'aggiornamento sostituisce."""
+    if IS_NUITKA:
+        orig = getattr(globals()["__compiled__"], "original_argv0", None)
+        return os.path.abspath(orig or sys.argv[0])
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(sys.executable)
+    return os.path.abspath(sys.argv[0])
+
+
+def components_dir():
+    """Cartella in cui si trovano i componenti del programma (con Nuitka: quella di estrazione)."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def clean_old_extractions():
+    """Con Nuitka i componenti vengono estratti una volta per versione, in una cartella per versione:
+    elimina quelle delle versioni precedenti, che non servono più."""
+    if not IS_NUITKA:
+        return
+    try:
+        here = components_dir()
+        parent = os.path.dirname(here)
+        if os.path.basename(parent) != "RidimensionaImmagini":  # per sicurezza: solo nella nostra cartella
+            return
+        import shutil
+        for name in os.listdir(parent):
+            path = os.path.join(parent, name)
+            if os.path.normcase(path) != os.path.normcase(here) and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)  # una versione ancora aperta resta: ci si riproverà
+    except Exception:
+        pass
+
+
 APP_NAME = "Ridimensiona Immagini"
-APP_VERSION = "0.9.7 beta"
+APP_VERSION = "0.9.8 beta"
 AUTHOR_NAME = "Giovanni Orlando"
 
 # --------------------------------------------------------------------------- aggiornamenti
@@ -65,7 +105,11 @@ EXE_ASSET = "RidimensionaImmagini.exe"
 
 # Novità delle versioni, dalla più recente. La sezione della versione corrente viene usata
 # anche come descrizione della versione pubblicata su GitHub.
-CHANGELOG = """## 0.9.7 beta - 24 novembre 2026
+CHANGELOG = """## 0.9.8 beta - 25 novembre 2026
+- Apertura molto più rapida: il programma ora è compilato con Nuitka e prepara i suoi componenti una sola volta per versione, invece che a ogni avvio. Il primo avvio dopo un aggiornamento resta un po' più lento, i successivi sono molto più veloci.
+- I componenti delle versioni precedenti vengono eliminati automaticamente.
+
+## 0.9.7 beta - 24 novembre 2026
 - Il pulsante "Scarica e installa" si chiama ora "Aggiorna ora": il programma non installa nulla, sostituisce solo il proprio file con quello nuovo.
 - Dopo un aggiornamento, alla riapertura il programma conferma il passaggio alla nuova versione e propone di vederne le novità.
 
@@ -324,7 +368,7 @@ def launch_replacement(new_exe, exe):
     ]
     with open(bat, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\n".join(lines) + "\n")
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("_PYI", "_MEIPASS"))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("_PYI", "_MEIPASS", "NUITKA_"))}
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"  # il nuovo eseguibile parte da zero
     subprocess.Popen(["cmd", "/c", bat], env=env, close_fds=True,
                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -1677,7 +1721,9 @@ class App:
 
         self.update_state()
         self.on_tab_changed()
-        if self.cfg.get("updated_from"):
+        if SKIP_STARTUP_CHECK:
+            pass
+        elif self.cfg.get("updated_from"):
             root.after(600, self.confirm_update)
         elif self.check_on_start.get():
             root.after(2000, lambda: self.check_updates(manual=False))
@@ -1803,7 +1849,7 @@ class App:
             insert_markup(txt, notes)
         txt.configure(state="disabled")
 
-        can_install = getattr(sys, "frozen", False) and sys.platform == "win32" and latest["exe"]
+        can_install = IS_PACKAGED and sys.platform == "win32" and latest["exe"]
         if can_install:
             ttk.Button(buttons, text="Aggiorna ora",
                        command=lambda: (win.destroy(), self.install_update(latest))).pack(side="left")
@@ -1825,7 +1871,7 @@ class App:
             messagebox.showinfo(APP_NAME, "Attendi la fine dell'elaborazione in corso, poi riprova "
                                           "da \"?\" > \"Controlla aggiornamenti\".")
             return
-        exe = os.path.abspath(sys.executable)
+        exe = program_path()
         folder = os.path.dirname(exe)
         in_place = can_write(folder)
         if not in_place:  # cartella protetta (es. Programmi): si scarica nella cartella Download
@@ -2481,6 +2527,18 @@ def run_selftest(log_path):
                   n == 1 and not err and os.path.getsize(res) < os.path.getsize(pdf))
         else:
             check("libreria PDF presente", False)
+        if HAS_DND:  # trascinamento dei file: serve la libreria tkdnd inclusa nel programma
+            try:
+                r = TkinterDnD.Tk()
+                r.withdraw()
+                r.destroy()
+                check("trascinamento dei file (tkdnd)", True)
+            except Exception as e:
+                check("trascinamento dei file (tkdnd): %s" % e, False)
+        else:
+            check("trascinamento dei file: libreria tkinterdnd2 assente", False)
+        lines.append("INFO    percorso del programma: %s" % program_path())
+        lines.append("INFO    cartella dei componenti: %s" % components_dir())
     except Exception:
         check("errore imprevisto:\n" + traceback.format_exc(), False)
     finally:
@@ -2492,16 +2550,36 @@ def run_selftest(log_path):
 
 
 def main():
+    global SKIP_STARTUP_CHECK, HAS_DND
     if len(sys.argv) >= 3 and sys.argv[1] == "--autotest":
         sys.exit(run_selftest(sys.argv[2]))
+    # --misura-avvio <file>: scrive nel file quando la finestra è pronta e si chiude (misura del tempo di apertura)
+    measure = sys.argv[2] if len(sys.argv) >= 3 and sys.argv[1] == "--misura-avvio" else None
+    SKIP_STARTUP_CHECK = bool(measure)
     if sys.platform == "win32":
         try:  # testo nitido sugli schermi ad alta risoluzione
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             pass
-    root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
+    root = None
+    if HAS_DND:
+        try:
+            root = TkinterDnD.Tk()
+        except Exception:  # componente del trascinamento non disponibile: si continua senza
+            HAS_DND = False
+    if root is None:
+        root = tk.Tk()
     App(root)
+    if measure:
+        def ready():
+            root.update()
+            with open(measure, "w", encoding="utf-8") as f:
+                f.write("pronto\n")
+            root.after(300, root.destroy)
+        root.after(1, ready)
+    else:
+        threading.Thread(target=clean_old_extractions, daemon=True).start()
     root.mainloop()
 
 

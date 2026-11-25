@@ -2,6 +2,10 @@
 # Si avvia da solo quando su "main" arriva il programma con un numero di versione (APP_VERSION)
 # non ancora pubblicato; se la versione esiste già non fa nulla.
 # Si può avviare anche a mano dalla scheda "Actions".
+#
+# L'eseguibile è compilato con Nuitka: i componenti vengono estratti una sola volta per versione
+# (in %LOCALAPPDATA%\RidimensionaImmagini\<versione>), quindi dal secondo avvio l'apertura è rapida.
+# Per confronto viene creata anche la versione con PyInstaller (non pubblicata) e se ne misura l'apertura.
 name: Crea e pubblica la versione
 
 on:
@@ -16,6 +20,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -27,8 +32,9 @@ jobs:
           src = open("RidimensionaImmagini.py", encoding="utf-8").read()
           ver = re.search(r'^APP_VERSION = "([^"]+)"', src, re.M).group(1).strip()
           tag = "v" + re.sub(r"\s+", "-", ver)
+          nums = [int(x) for x in re.findall(r"\d+", ver)[:3]] + [0, 0, 0]
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"version={ver}\ntag={tag}\n")
+              f.write(f"version={ver}\ntag={tag}\nv4={nums[0]}.{nums[1]}.{nums[2]}.0\n")
           print("Versione", ver, "- etichetta", tag)
 
       - name: Controlla se questa versione è già pubblicata
@@ -53,26 +59,81 @@ jobs:
       - name: Installa i componenti
         if: steps.check.outputs.nuova == 'si'
         run: |
-          python -m pip install --upgrade pip pillow pillow-heif tkinterdnd2 pyinstaller
+          python -m pip install --upgrade pip pillow pillow-heif tkinterdnd2 pyinstaller nuitka ordered-set zstandard
           # PyMuPDF senza le librerie aggiuntive che il programma non usa
           python -m pip install --upgrade --no-deps pymupdf
 
-      - name: Crea l'eseguibile
+      - name: Crea l'eseguibile con PyInstaller (solo per confronto)
         if: steps.check.outputs.nuova == 'si'
         run: |
           python crea_version_info.py
           python -m PyInstaller --noconfirm --clean RidimensionaImmagini.spec
+          New-Item -ItemType Directory -Force confronto | Out-Null
+          Move-Item dist\RidimensionaImmagini.exe confronto\RidimensionaImmagini_pyinstaller.exe
 
-      - name: Prova automatica dell'eseguibile (immagini, formati, PDF)
+      - name: Crea l'eseguibile con Nuitka
+        if: steps.check.outputs.nuova == 'si'
+        run: |
+          $dnd = python -c "import tkinterdnd2, os; print(os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd'))"
+          python -m nuitka --onefile --assume-yes-for-downloads --msvc=latest --lto=no `
+            --windows-console-mode=disable --enable-plugin=tk-inter `
+            --onefile-tempdir-spec="{CACHE_DIR}/RidimensionaImmagini/{VERSION}" `
+            --include-package-data=tkinterdnd2 --include-data-dir="$dnd=tkinterdnd2/tkdnd" `
+            --include-package=pillow_heif --include-package-data=pillow_heif `
+            --nofollow-import-to=numpy,onnxruntime,networkx,pymupdf.layout,pymupdf4llm,pandas,matplotlib,scipy,IPython,yaml,tabulate,psutil `
+            --company-name="Giovanni Orlando" --product-name="Ridimensiona Immagini" `
+            --file-description="Ridimensiona Immagini" --copyright="Giovanni Orlando - licenza AGPL-3.0" `
+            --file-version=${{ steps.ver.outputs.v4 }} --product-version=${{ steps.ver.outputs.v4 }} `
+            --output-dir=build_nuitka --output-filename=RidimensionaImmagini.exe RidimensionaImmagini.py
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build_nuitka\RidimensionaImmagini.exe dist\RidimensionaImmagini.exe
+          $mb = [math]::Round((Get-Item dist\RidimensionaImmagini.exe).Length / 1MB, 1)
+          Write-Host "Dimensione dell'eseguibile Nuitka: $mb MB"
+
+      - name: Prova automatica dell'eseguibile (immagini, formati, PDF, trascinamento)
         if: steps.check.outputs.nuova == 'si'
         shell: pwsh
         run: |
-          $mb = [math]::Round((Get-Item dist\RidimensionaImmagini.exe).Length / 1MB, 1)
-          Write-Host "Dimensione dell'eseguibile: $mb MB"
+          $exe = (Resolve-Path dist\RidimensionaImmagini.exe).Path
           $log = Join-Path $PWD "prova_automatica.txt"
-          $p = Start-Process dist\RidimensionaImmagini.exe -ArgumentList "--autotest", "`"$log`"" -PassThru -Wait
+          $p = Start-Process $exe -ArgumentList "--autotest", "`"$log`"" -PassThru -Wait
           Get-Content $log
           if ($p.ExitCode -ne 0) { throw "La prova automatica non è riuscita" }
+          # l'aggiornamento automatico deve sostituire proprio questo file
+          $path = (Select-String -Path $log -Pattern "percorso del programma: (.*)$").Matches[0].Groups[1].Value.Trim()
+          if ($path -ne $exe) { throw "Percorso del programma errato: '$path' invece di '$exe'" }
+          Write-Host "Percorso del programma corretto: $path"
+
+      - name: Misura il tempo di apertura
+        if: steps.check.outputs.nuova == 'si'
+        shell: pwsh
+        run: |
+          function Misura([string]$exe) {
+            $f = Join-Path $env:TEMP "avvio_pronto.txt"
+            Remove-Item $f -ErrorAction SilentlyContinue
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $p = Start-Process $exe -ArgumentList "--misura-avvio", "`"$f`"" -PassThru
+            while (-not (Test-Path $f)) {
+              Start-Sleep -Milliseconds 25
+              if ($sw.Elapsed.TotalSeconds -gt 180) { throw "Il programma non si è aperto entro 3 minuti" }
+            }
+            $t = $sw.Elapsed.TotalSeconds
+            $p.WaitForExit(60000) | Out-Null
+            Start-Sleep -Seconds 2
+            return [math]::Round($t, 2)
+          }
+          Remove-Item "$env:LOCALAPPDATA\RidimensionaImmagini" -Recurse -Force -ErrorAction SilentlyContinue
+          $nk = @(1..4 | ForEach-Object { Misura (Resolve-Path dist\RidimensionaImmagini.exe).Path })
+          $pi = @(1..4 | ForEach-Object { Misura (Resolve-Path confronto\RidimensionaImmagini_pyinstaller.exe).Path })
+          $nkNext = [math]::Round(($nk[1..3] | Measure-Object -Average).Average, 1)
+          $piAvg = [math]::Round(($pi[1..3] | Measure-Object -Average).Average, 1)
+          $txt = "Nuitka: primo avvio $($nk[0]) s, avvii successivi $($nk[1..3] -join ' / ') s`nPyInstaller: $($pi -join ' / ') s"
+          Write-Host $txt
+          "### Tempo di apertura`n``````n$txt`n``````" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $nkFirst = [math]::Round($nk[0], 1)
+          "Tempo di apertura misurato su un PC Windows di GitHub: primo avvio dopo l'aggiornamento circa $nkFirst s, avvii successivi circa $nkNext s (con il metodo precedente: circa $piAvg s a ogni avvio)." | Out-File tempi_avvio.txt -Encoding utf8
+          $nk -join ";" | Out-File tempi_nuitka.txt -Encoding ascii
+          $pi -join ";" | Out-File tempi_pyinstaller.txt -Encoding ascii
 
       - name: Prova di avvio dell'eseguibile
         if: steps.check.outputs.nuova == 'si'
@@ -88,7 +149,7 @@ jobs:
         if: steps.check.outputs.nuova == 'si'
         shell: python
         run: |
-          import hashlib, re
+          import hashlib, os, re
           exe = "dist/RidimensionaImmagini.exe"
           digest = hashlib.sha256(open(exe, "rb").read()).hexdigest()
           open(exe + ".sha256", "w").write(digest + "  RidimensionaImmagini.exe\n")
@@ -97,6 +158,8 @@ jobs:
           section = re.split(r"(?m)^## ", log)[1]          # la versione più recente
           title, _, body = section.partition("\n")
           notes = "## Novità della versione " + title.strip() + "\n\n" + body.strip() + "\n"
+          if os.path.exists("tempi_avvio.txt"):
+              notes += "\n" + open("tempi_avvio.txt", encoding="utf-8-sig").read().strip() + "\n"
           notes += "\n---\nScarica **RidimensionaImmagini.exe** qui sotto (sezione *Assets*) e avvialo: non serve installare nulla.\n"
           notes += "Chi ha già il programma riceve l'aggiornamento automaticamente all'avvio.\n"
           open("note_versione.md", "w", encoding="utf-8").write(notes)
