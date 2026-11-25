@@ -43,12 +43,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "${{ steps.ver.outputs.tag }}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+          TAG="${{ steps.ver.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          draft=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft 2>/dev/null || true)
+          if [ "$draft" = "false" ]; then
             echo "nuova=no" >> "$GITHUB_OUTPUT"
-            echo "La versione ${{ steps.ver.outputs.tag }} è già pubblicata: nulla da fare."
+            echo "La versione $TAG è già pubblicata: nulla da fare."
           else
+            if [ "$draft" = "true" ]; then
+              echo "Trovata una bozza di $TAG rimasta incompleta: viene eliminata e rifatta."
+              gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag || gh release delete "$TAG" --repo "$REPO" --yes
+            fi
             echo "nuova=si" >> "$GITHUB_OUTPUT"
-            echo "Nuova versione da pubblicare: ${{ steps.ver.outputs.tag }}"
+            echo "Nuova versione da pubblicare: $TAG"
           fi
 
       - uses: actions/setup-python@v5
@@ -156,13 +163,28 @@ jobs:
           open("note_versione.md", "w", encoding="utf-8").write(notes)
           print(notes)
 
-      - uses: softprops/action-gh-release@v2
+      - name: Pubblica la versione (fino a 3 tentativi)
         if: steps.check.outputs.nuova == 'si'
-        with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          name: Ridimensiona Immagini ${{ steps.ver.outputs.version }}
-          body_path: note_versione.md
-          files: |
-            dist/RidimensionaImmagini.exe
-            dist/RidimensionaImmagini.exe.sha256
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          for i in 1 2 3; do
+            if gh release create "$TAG" dist/RidimensionaImmagini.exe dist/RidimensionaImmagini.exe.sha256 \
+                 --repo "$REPO" --target "${{ github.sha }}" \
+                 --title "Ridimensiona Immagini ${{ steps.ver.outputs.version }}" --notes-file note_versione.md; then
+              break
+            fi
+            echo "Tentativo $i non riuscito: elimino quanto creato e riprovo."
+            gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag || true
+            if [ "$i" = "3" ]; then exit 1; fi
+            sleep 30
+          done
+          # verifica finale: versione pubblica, con l'exe completo
+          gh release view "$TAG" --repo "$REPO" --json isDraft,assets \
+            --jq '"bozza: \(.isDraft) | " + ([.assets[] | "\(.name) \(.size)"] | join(", "))'
+          size=$(stat -c %s dist/RidimensionaImmagini.exe)
+          gh release view "$TAG" --repo "$REPO" --json isDraft,assets \
+            --jq "(.isDraft == false) and ([.assets[] | select(.name == \"RidimensionaImmagini.exe\" and .size == $size)] | length == 1)" | grep -q true
